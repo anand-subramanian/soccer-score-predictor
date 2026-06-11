@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Picker - World Cup Game Predictor</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Picker</p>
+        <h1>World Cup Game Predictor</h1>
+      </div>
+      <div class="topbar-actions">
+        <div class="summary" aria-live="polite">
+          <span id="completion">0 / 72 picked</span>
+          <span id="savedCount">0 players saved</span>
+        </div>
+        <nav class="page-nav" aria-label="Pages">
+          <a href="/">Leaderboard</a>
+          <a class="active" href="/picker.html">Picker</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar" aria-label="Submission controls">
+        <form id="pickForm" class="panel">
+          <label for="playerName">Player name</label>
+          <input id="playerName" name="playerName" autocomplete="name" placeholder="Enter contestant name" required>
+
+          <div class="mode-switch" aria-label="Score entry mode">
+            <button type="button" id="pickMode" class="mode-button active">Picks</button>
+            <button type="button" id="resultMode" class="mode-button">Results</button>
+          </div>
+
+          <div class="actions">
+            <button type="submit">Save picks</button>
+            <button type="button" id="clearScores" class="secondary">Clear scores</button>
+          </div>
+
+          <p id="status" class="status" role="status"></p>
+        </form>
+
+        <section class="panel">
+          <h2>Saved contestants</h2>
+          <div id="contestants" class="contestants"></div>
+        </section>
+      </aside>
+
+      <section class="fixtures" aria-label="Fixtures">
+        <div class="fixtures-toolbar">
+          <input id="fixtureSearch" type="search" placeholder="Search teams">
+          <select id="dateFilter" aria-label="Filter by date"></select>
+        </div>
+        <div id="fixtureList"></div>
+      </section>
+    </main>
+
+    <script src="/fixtures.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
