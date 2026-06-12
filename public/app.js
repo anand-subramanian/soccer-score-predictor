@@ -7,6 +7,7 @@ const completionEl = document.querySelector("#completion");
 const savedCountEl = document.querySelector("#savedCount");
 const contestantsEl = document.querySelector("#contestants");
 const leaderboardEl = document.querySelector("#leaderboard");
+const rankChartEl = document.querySelector("#rankChart");
 const clearScoresButton = document.querySelector("#clearScores");
 const searchInput = document.querySelector("#fixtureSearch");
 const dateFilter = document.querySelector("#dateFilter");
@@ -212,23 +213,78 @@ function scorePrediction(prediction, result) {
   return getScoreDetails(prediction, result).points;
 }
 
-function calculateLeaderboard() {
+function getScoredFixtureIdsThroughDate(maxDate = null) {
+  const allowedDates = maxDate
+    ? new Set(getScoredDates().slice(0, getScoredDates().indexOf(maxDate) + 1))
+    : null;
+  return fixtures
+    .filter(fixture => resultScores.has(fixture.id))
+    .filter(fixture => !allowedDates || allowedDates.has(fixture.date))
+    .map(fixture => fixture.id);
+}
+
+function calculateLeaderboard(scoredFixtureIds = getScoredFixtureIdsThroughDate()) {
+  const resultedFixtureIds = new Set(scoredFixtureIds);
   return savedPicks.map(pick => {
-    const scoredPredictions = pick.predictions.map(prediction => {
-      const result = resultScores.get(prediction.fixtureId);
-      return {
-        ...prediction,
-        points: scorePrediction(prediction, result)
-      };
-    });
+    const distribution = Object.fromEntries([0, 1, 2, 3, 4, 5].map(points => [points, 0]));
+    const recentByPoints = Object.fromEntries([0, 1, 2, 3, 4, 5].map(points => [points, []]));
+    const predictionsByFixture = new Map(pick.predictions.map(prediction => [prediction.fixtureId, prediction]));
+    const scoredPredictions = [...resultedFixtureIds].map(fixtureId => {
+      const fixture = fixtures.find(item => item.id === fixtureId);
+      const prediction = predictionsByFixture.get(fixtureId);
+      const result = resultScores.get(fixtureId);
+      if (!prediction) {
+        distribution[0] += 1;
+        recentByPoints[0].push({ fixture, result, prediction: null, points: 0 });
+        return null;
+      }
+      const points = scorePrediction(prediction, result);
+      distribution[points] += 1;
+      recentByPoints[points].push({ fixture, result, prediction, points });
+      return { ...prediction, points };
+    }).filter(Boolean);
+    const missedResultCount = recentByPoints[0].filter(item => !item.prediction).length;
+
+    for (const points of [0, 1, 2, 3, 4, 5]) {
+      recentByPoints[points] = recentByPoints[points].slice(-3).reverse();
+    }
 
     return {
       playerName: pick.playerName,
       total: scoredPredictions.reduce((sum, prediction) => sum + prediction.points, 0),
-      scoredCount: scoredPredictions.filter(prediction => resultScores.has(prediction.fixtureId)).length,
-      pickCount: pick.predictions.length
+      scoredCount: scoredPredictions.length,
+      pickCount: pick.predictions.length,
+      missedResultCount,
+      distribution,
+      recentByPoints
     };
   }).sort((a, b) => b.total - a.total || a.playerName.localeCompare(b.playerName));
+}
+
+function getScoredDates() {
+  return [...new Set(fixtures
+    .filter(fixture => resultScores.has(fixture.id))
+    .map(fixture => fixture.date)
+  )];
+}
+
+function getRankMap(leaderboard) {
+  return new Map(leaderboard.map((entry, index) => [entry.playerName, index + 1]));
+}
+
+function calculateRankMovement() {
+  const scoredDates = getScoredDates();
+  const currentRanks = getRankMap(calculateLeaderboard());
+  if (scoredDates.length < 2) {
+    return new Map([...currentRanks.keys()].map(playerName => [playerName, 0]));
+  }
+
+  const previousDate = scoredDates[scoredDates.length - 2];
+  const previousRanks = getRankMap(calculateLeaderboard(getScoredFixtureIdsThroughDate(previousDate)));
+  return new Map([...currentRanks.entries()].map(([playerName, currentRank]) => {
+    const previousRank = previousRanks.get(playerName) || currentRank;
+    return [playerName, previousRank - currentRank];
+  }));
 }
 
 function renderLeaderboard() {
@@ -239,14 +295,126 @@ function renderLeaderboard() {
     return;
   }
 
+  const movement = calculateRankMovement();
   leaderboardEl.innerHTML = leaderboard.map((entry, index) => `
     <div class="leaderboard-row">
       <span class="rank">${index + 1}</span>
-      <span>${escapeHtml(entry.playerName)}</span>
-      <strong>${entry.total}</strong>
-      <small>${entry.scoredCount} scored</small>
+      <span class="leaderboard-name">${escapeHtml(entry.playerName)}</span>
+      <div class="leaderboard-score">
+        <strong>${entry.total}</strong>
+        ${renderMovementBadge(movement.get(entry.playerName) || 0)}
+      </div>
+      <small>${entry.scoredCount} scored${entry.missedResultCount ? `, ${entry.missedResultCount} missed` : ""}</small>
+      <details class="score-breakdown">
+        <summary>Breakdown</summary>
+        <div class="score-distribution" aria-label="${escapeHtml(entry.playerName)} score distribution">
+          ${[5, 4, 3, 2, 1, 0].map(points => {
+            const count = entry.distribution[points];
+            return `
+              <div class="distribution-row">
+                <div class="distribution-count">
+                  <span>${points} pts</span>
+                  <b>${count}</b>
+                </div>
+                ${renderRecentScoredGames(entry.recentByPoints[points])}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </details>
     </div>
   `).join("");
+  renderRankChart();
+}
+
+function renderRecentScoredGames(games) {
+  if (!games.length) {
+    return '<span class="recent-games muted">No recent games</span>';
+  }
+
+  return `
+    <div class="recent-games">
+      ${games.map(game => `
+        <span class="recent-game">
+          ${escapeHtml(game.fixture.home)} ${game.result.homeScore}-${game.result.awayScore} ${escapeHtml(game.fixture.away)}
+          ${game.prediction ? `<em>Pick ${game.prediction.homeScore}-${game.prediction.awayScore}</em>` : "<em>No pick</em>"}
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMovementBadge(change) {
+  if (change > 0) {
+    return `<span class="movement movement-up" title="Up ${change} rank${change === 1 ? "" : "s"} since the previous scored matchday">▲ ${change}</span>`;
+  }
+  if (change < 0) {
+    const drop = Math.abs(change);
+    return `<span class="movement movement-down" title="Down ${drop} rank${drop === 1 ? "" : "s"} since the previous scored matchday">▼ ${drop}</span>`;
+  }
+  return '<span class="movement movement-flat" title="No rank change since the previous scored matchday">–</span>';
+}
+
+function renderRankChart() {
+  if (!rankChartEl) return;
+  const scoredDates = getScoredDates();
+  if (!savedPicks.length || !scoredDates.length) {
+    rankChartEl.innerHTML = '<p class="muted">Rank history appears once results are entered.</p>';
+    return;
+  }
+
+  const snapshots = scoredDates.map(date => ({
+    date,
+    ranks: getRankMap(calculateLeaderboard(getScoredFixtureIdsThroughDate(date)))
+  }));
+  const width = 900;
+  const height = 340;
+  const padding = { top: 24, right: 28, bottom: 72, left: 46 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const maxRank = Math.max(1, savedPicks.length);
+  const xFor = index => padding.left + (snapshots.length === 1 ? plotWidth / 2 : (index / (snapshots.length - 1)) * plotWidth);
+  const yFor = rank => padding.top + ((rank - 1) / Math.max(1, maxRank - 1)) * plotHeight;
+  const colors = ["#096b5d", "#b42318", "#175cd3", "#93370d", "#6b21a8", "#047857", "#c11574", "#475467"];
+
+  const lines = savedPicks.map((pick, playerIndex) => {
+    const points = snapshots.map((snapshot, snapshotIndex) => {
+      const rank = snapshot.ranks.get(pick.playerName) || maxRank;
+      return `${xFor(snapshotIndex)},${yFor(rank)}`;
+    }).join(" ");
+    const lastRank = snapshots[snapshots.length - 1].ranks.get(pick.playerName) || maxRank;
+    const lastX = xFor(snapshots.length - 1);
+    const lastY = yFor(lastRank);
+    const color = colors[playerIndex % colors.length];
+    return `
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="${lastX}" cy="${lastY}" r="4" fill="${color}" />
+    `;
+  }).join("");
+
+  const rankLabels = Array.from({ length: maxRank }, (_, index) => index + 1).map(rank => `
+    <text x="12" y="${yFor(rank) + 4}" class="chart-label">#${rank}</text>
+    <line x1="${padding.left}" y1="${yFor(rank)}" x2="${width - padding.right}" y2="${yFor(rank)}" class="chart-grid" />
+  `).join("");
+
+  const dateLabels = snapshots.map((snapshot, index) => `
+    <text x="${xFor(index)}" y="${height - 34}" class="chart-label chart-date" transform="rotate(-25 ${xFor(index)} ${height - 34})">${escapeHtml(snapshot.date.replace(", 2026", ""))}</text>
+  `).join("");
+
+  const legend = savedPicks.map((pick, index) => `
+    <span><i style="background: ${colors[index % colors.length]}"></i>${escapeHtml(pick.playerName)}</span>
+  `).join("");
+
+  rankChartEl.innerHTML = `
+    <div class="rank-chart-scroll">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Contestant ranks by scored matchday">
+        ${rankLabels}
+        ${dateLabels}
+        ${lines}
+      </svg>
+    </div>
+    <div class="chart-legend">${legend}</div>
+  `;
 }
 
 function loadPick(playerName) {
