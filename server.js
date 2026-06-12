@@ -122,6 +122,28 @@ function validateResults(payload) {
   return null;
 }
 
+function mergeUnlockedPredictions(incomingPredictions, existingPick, results) {
+  const resultedFixtureIds = new Set(Object.keys(results));
+  const existingLockedPredictions = new Map(
+    (existingPick?.predictions || [])
+      .filter(prediction => resultedFixtureIds.has(prediction.fixtureId))
+      .map(prediction => [prediction.fixtureId, prediction])
+  );
+  const mergedPredictions = new Map();
+
+  for (const prediction of incomingPredictions) {
+    if (!resultedFixtureIds.has(prediction.fixtureId)) {
+      mergedPredictions.set(prediction.fixtureId, prediction);
+    }
+  }
+
+  for (const [fixtureId, prediction] of existingLockedPredictions) {
+    mergedPredictions.set(fixtureId, prediction);
+  }
+
+  return [...mergedPredictions.values()];
+}
+
 async function handleApi(req, res) {
   if (req.method === "GET" && req.url === "/api/picks") {
     const picks = await readPicks();
@@ -151,17 +173,26 @@ async function handleApi(req, res) {
     }
 
     const picks = await readPicks();
+    const results = await readResults();
     const playerName = payload.playerName.trim();
+    const existingIndex = picks.findIndex(pick => pick.playerName.toLowerCase() === playerName.toLowerCase());
+    const existingPick = existingIndex >= 0 ? picks[existingIndex] : null;
+    const predictions = mergeUnlockedPredictions(payload.predictions, existingPick, results);
+
+    if (!predictions.length) {
+      sendJson(res, 400, { error: "No unlocked predictions to save" });
+      return;
+    }
+
     const now = new Date().toISOString();
     const submission = {
       id: crypto.randomUUID(),
       playerName,
       createdAt: now,
       updatedAt: now,
-      predictions: payload.predictions
+      predictions
     };
 
-    const existingIndex = picks.findIndex(pick => pick.playerName.toLowerCase() === playerName.toLowerCase());
     if (existingIndex >= 0) {
       submission.id = picks[existingIndex].id || submission.id;
       submission.createdAt = picks[existingIndex].createdAt || submission.createdAt;

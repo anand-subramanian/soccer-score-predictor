@@ -18,6 +18,7 @@ const pickScores = new Map();
 const resultScores = new Map();
 let savedPicks = [];
 let activeMode = "picks";
+let selectedPlayerName = "";
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({
@@ -53,26 +54,39 @@ function renderFixtures() {
 
   fixtureList.innerHTML = visibleFixtures.map(fixture => {
     const score = scoreMap.get(fixture.id) || {};
+    const result = resultScores.get(fixture.id);
+    const isLockedPick = activeMode === "picks" && Boolean(result);
+    const scoredPrediction = isLockedPick && Number.isInteger(score.homeScore) && Number.isInteger(score.awayScore)
+      ? getScoreDetails(score, result)
+      : null;
     const dateHeader = fixture.date === currentDate ? "" : `<h2 class="date-heading">${escapeHtml(fixture.date)}</h2>`;
     currentDate = fixture.date;
     return `
       ${dateHeader}
-      <article class="fixture" data-fixture-id="${escapeHtml(fixture.id)}">
+      <article class="fixture ${result ? "fixture-resulted" : ""}" data-fixture-id="${escapeHtml(fixture.id)}">
         <div class="fixture-meta">
           <span>${escapeHtml(fixture.time)} UK</span>
           ${fixture.broadcaster ? `<span>${escapeHtml(fixture.broadcaster)}</span>` : ""}
+          ${result ? `<span>Result ${result.homeScore}-${result.awayScore}</span>` : ""}
+          ${isLockedPick ? "<span>Pick locked</span>" : ""}
         </div>
         <div class="score-row">
           <label class="team-score">
             <span>${escapeHtml(fixture.home)}</span>
-            <input inputmode="numeric" pattern="[0-9]*" min="0" max="99" type="number" value="${score.homeScore ?? ""}" data-score="homeScore" aria-label="${escapeHtml(fixture.home)} score against ${escapeHtml(fixture.away)}">
+            <input inputmode="numeric" pattern="[0-9]*" min="0" max="99" type="number" value="${score.homeScore ?? ""}" data-score="homeScore" ${isLockedPick ? "disabled" : ""} aria-label="${escapeHtml(fixture.home)} score against ${escapeHtml(fixture.away)}">
           </label>
           <span class="versus">vs</span>
           <label class="team-score away">
-            <input inputmode="numeric" pattern="[0-9]*" min="0" max="99" type="number" value="${score.awayScore ?? ""}" data-score="awayScore" aria-label="${escapeHtml(fixture.away)} score against ${escapeHtml(fixture.home)}">
+            <input inputmode="numeric" pattern="[0-9]*" min="0" max="99" type="number" value="${score.awayScore ?? ""}" data-score="awayScore" ${isLockedPick ? "disabled" : ""} aria-label="${escapeHtml(fixture.away)} score against ${escapeHtml(fixture.home)}">
             <span>${escapeHtml(fixture.away)}</span>
           </label>
         </div>
+        ${scoredPrediction ? `
+          <div class="fixture-score">
+            <strong>${scoredPrediction.points} pts</strong>
+            <span>${escapeHtml(scoredPrediction.summary)}</span>
+          </div>
+        ` : ""}
       </article>
     `;
   }).join("");
@@ -141,7 +155,7 @@ function renderContestants() {
     .slice()
     .sort((a, b) => a.playerName.localeCompare(b.playerName))
     .map(pick => `
-      <button type="button" data-player="${escapeHtml(pick.playerName)}">
+      <button type="button" data-player="${escapeHtml(pick.playerName)}" class="${pick.playerName === selectedPlayerName ? "active" : ""}">
         <span>${escapeHtml(pick.playerName)}</span>
         <small>${pick.predictions.length} picks</small>
       </button>
@@ -154,10 +168,10 @@ function getOutcome(homeScore, awayScore) {
   return "draw";
 }
 
-function scorePrediction(prediction, result) {
-  if (!result) return 0;
+function getScoreDetails(prediction, result) {
+  if (!result) return { points: 0, summary: "Awaiting result", parts: [] };
   if (prediction.homeScore === result.homeScore && prediction.awayScore === result.awayScore) {
-    return 5;
+    return { points: 5, summary: "Perfect score", parts: ["Perfect score +5"] };
   }
 
   const predictedOutcome = getOutcome(prediction.homeScore, prediction.awayScore);
@@ -166,18 +180,36 @@ function scorePrediction(prediction, result) {
   const actualGoalDifference = result.homeScore - result.awayScore;
   const hasCorrectOutcome = predictedOutcome === actualOutcome;
   const hasCorrectGoalDifference = predictedGoalDifference === actualGoalDifference;
+  const parts = [];
   let points = 0;
 
   if (hasCorrectOutcome && hasCorrectGoalDifference) {
     points += 3;
+    parts.push("Correct outcome and goal difference +3");
   } else if (hasCorrectOutcome) {
     points += 2;
+    parts.push("Correct outcome +2");
   }
 
-  if (prediction.homeScore === result.homeScore) points += 1;
-  if (prediction.awayScore === result.awayScore) points += 1;
+  if (prediction.homeScore === result.homeScore) {
+    points += 1;
+    parts.push("Home score +1");
+  }
+  if (prediction.awayScore === result.awayScore) {
+    points += 1;
+    parts.push("Away score +1");
+  }
 
-  return Math.min(points, 5);
+  const cappedPoints = Math.min(points, 5);
+  return {
+    points: cappedPoints,
+    summary: parts.length ? parts.join(", ") : "No scoring match",
+    parts
+  };
+}
+
+function scorePrediction(prediction, result) {
+  return getScoreDetails(prediction, result).points;
 }
 
 function calculateLeaderboard() {
@@ -221,6 +253,7 @@ function loadPick(playerName) {
   const pick = savedPicks.find(item => item.playerName === playerName);
   if (!pick) return;
 
+  selectedPlayerName = pick.playerName;
   pickScores.clear();
   for (const prediction of pick.predictions) {
     pickScores.set(prediction.fixtureId, {
@@ -233,6 +266,7 @@ function loadPick(playerName) {
   renderFixtures();
   updateCompletion();
   setStatus(`Loaded ${pick.playerName}'s picks.`, "success");
+  renderContestants();
 }
 
 async function fetchPicks() {
@@ -253,6 +287,7 @@ async function fetchResults() {
   }
 
   renderLeaderboard();
+  renderFixtures();
 }
 
 function setMode(mode) {
@@ -331,7 +366,9 @@ form?.addEventListener("submit", async event => {
     return;
   }
 
+  selectedPlayerName = data.pick.playerName;
   await fetchPicks();
+  renderContestants();
   setStatus(`Saved ${predictions.length} pick${predictions.length === 1 ? "" : "s"} for ${data.pick.playerName} to data/picks.json.`, "success");
 });
 
@@ -339,7 +376,11 @@ clearScoresButton?.addEventListener("click", () => {
   if (activeMode === "results") {
     resultScores.clear();
   } else {
-    pickScores.clear();
+    for (const fixture of fixtures) {
+      if (!resultScores.has(fixture.id)) {
+        pickScores.delete(fixture.id);
+      }
+    }
   }
   renderFixtures();
   updateCompletion();
@@ -380,6 +421,7 @@ async function saveResults() {
   }
 
   renderLeaderboard();
+  renderFixtures();
   setStatus(`Saved ${data.savedCount} result${data.savedCount === 1 ? "" : "s"} to data/results.json.`, "success");
 }
 

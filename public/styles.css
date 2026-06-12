@@ -298,6 +298,12 @@ button.secondary:hover {
   background: #eef2f6;
 }
 
+.contestants button.active {
+  border-color: var(--accent);
+  background: #e8f4f1;
+  color: var(--accent-strong);
+}
+
 .contestants small,
 .muted {
   color: var(--muted);
@@ -398,6 +404,16 @@ button.secondary:hover {
   padding: 14px;
 }
 
+.fixture-resulted {
+  border-color: #b7d7cf;
+  background: #edf7f4;
+}
+
+.fixture-resulted .fixture-meta span {
+  background: #d7ede7;
+  color: #24574d;
+}
+
 .fixture-meta {
   display: flex;
   flex-wrap: wrap;
@@ -456,6 +472,26 @@ button.secondary:hover {
   font-weight: 900;
   text-align: center;
   text-transform: uppercase;
+}
+
+.fixture-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+  color: #24574d;
+  font-size: 0.86rem;
+}
+
+.fixture-score strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
 }
 
 @media (max-width: 860px) {
