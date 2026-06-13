@@ -213,17 +213,25 @@ function scorePrediction(prediction, result) {
   return getScoreDetails(prediction, result).points;
 }
 
-function getScoredFixtureIdsThroughDate(maxDate = null) {
-  const allowedDates = maxDate
-    ? new Set(getScoredDates().slice(0, getScoredDates().indexOf(maxDate) + 1))
-    : null;
+function getFixtureTimestamp(fixture) {
+  const date = new Date(`${fixture.date} ${fixture.time.replace(".", ":").toUpperCase()} GMT`);
+  return Number.isNaN(date.getTime()) ? fixtures.findIndex(item => item.id === fixture.id) : date.getTime();
+}
+
+function getResultedFixtures() {
   return fixtures
     .filter(fixture => resultScores.has(fixture.id))
-    .filter(fixture => !allowedDates || allowedDates.has(fixture.date))
+    .slice()
+    .sort((a, b) => getFixtureTimestamp(a) - getFixtureTimestamp(b));
+}
+
+function getScoredFixtureIdsThroughMatchday(matchday = null) {
+  return getResultedFixtures()
+    .filter(fixture => matchday === null || fixture.matchday <= matchday)
     .map(fixture => fixture.id);
 }
 
-function calculateLeaderboard(scoredFixtureIds = getScoredFixtureIdsThroughDate()) {
+function calculateLeaderboard(scoredFixtureIds = getScoredFixtureIdsThroughMatchday()) {
   const resultedFixtureIds = new Set(scoredFixtureIds);
   return savedPicks.map(pick => {
     const distribution = Object.fromEntries([0, 1, 2, 3, 4, 5].map(points => [points, 0]));
@@ -261,26 +269,31 @@ function calculateLeaderboard(scoredFixtureIds = getScoredFixtureIdsThroughDate(
   }).sort((a, b) => b.total - a.total || a.playerName.localeCompare(b.playerName));
 }
 
-function getScoredDates() {
-  return [...new Set(fixtures
-    .filter(fixture => resultScores.has(fixture.id))
-    .map(fixture => fixture.date)
-  )];
-}
-
 function getRankMap(leaderboard) {
   return new Map(leaderboard.map((entry, index) => [entry.playerName, index + 1]));
 }
 
+function getScoredMatchdays() {
+  return [...new Set(getResultedFixtures().map(fixture => fixture.matchday))].sort();
+}
+
+function getMatchdayLabel(matchday) {
+  return fixtures.find(fixture => fixture.matchday === matchday)?.matchdayLabel || matchday;
+}
+
 function calculateRankMovement() {
-  const scoredDates = getScoredDates();
+  const resultedFixtures = getResultedFixtures();
   const currentRanks = getRankMap(calculateLeaderboard());
-  if (scoredDates.length < 2) {
+  if (!resultedFixtures.length) {
     return new Map([...currentRanks.keys()].map(playerName => [playerName, 0]));
   }
 
-  const previousDate = scoredDates[scoredDates.length - 2];
-  const previousRanks = getRankMap(calculateLeaderboard(getScoredFixtureIdsThroughDate(previousDate)));
+  const latestTimestamp = getFixtureTimestamp(resultedFixtures[resultedFixtures.length - 1]);
+  const cutoffTimestamp = latestTimestamp - (48 * 60 * 60 * 1000);
+  const baselineFixtureIds = resultedFixtures
+    .filter(fixture => getFixtureTimestamp(fixture) < cutoffTimestamp)
+    .map(fixture => fixture.id);
+  const previousRanks = getRankMap(calculateLeaderboard(baselineFixtureIds));
   return new Map([...currentRanks.entries()].map(([playerName, currentRank]) => {
     const previousRank = previousRanks.get(playerName) || currentRank;
     return [playerName, previousRank - currentRank];
@@ -346,26 +359,26 @@ function renderRecentScoredGames(games) {
 
 function renderMovementBadge(change) {
   if (change > 0) {
-    return `<span class="movement movement-up" title="Up ${change} rank${change === 1 ? "" : "s"} since the previous scored matchday">▲ ${change}</span>`;
+    return `<span class="movement movement-up" title="Up ${change} rank${change === 1 ? "" : "s"} over the latest 48 hours of resulted games">▲ ${change}</span>`;
   }
   if (change < 0) {
     const drop = Math.abs(change);
-    return `<span class="movement movement-down" title="Down ${drop} rank${drop === 1 ? "" : "s"} since the previous scored matchday">▼ ${drop}</span>`;
+    return `<span class="movement movement-down" title="Down ${drop} rank${drop === 1 ? "" : "s"} over the latest 48 hours of resulted games">▼ ${drop}</span>`;
   }
-  return '<span class="movement movement-flat" title="No rank change since the previous scored matchday">–</span>';
+  return '<span class="movement movement-flat" title="No rank change over the latest 48 hours of resulted games">–</span>';
 }
 
 function renderRankChart() {
   if (!rankChartEl) return;
-  const scoredDates = getScoredDates();
-  if (!savedPicks.length || !scoredDates.length) {
+  const scoredMatchdays = getScoredMatchdays();
+  if (!savedPicks.length || !scoredMatchdays.length) {
     rankChartEl.innerHTML = '<p class="muted">Rank history appears once results are entered.</p>';
     return;
   }
 
-  const snapshots = scoredDates.map(date => ({
-    date,
-    ranks: getRankMap(calculateLeaderboard(getScoredFixtureIdsThroughDate(date)))
+  const snapshots = scoredMatchdays.map(matchday => ({
+    matchday,
+    ranks: getRankMap(calculateLeaderboard(getScoredFixtureIdsThroughMatchday(matchday)))
   }));
   const width = 900;
   const height = 340;
@@ -397,8 +410,12 @@ function renderRankChart() {
     <line x1="${padding.left}" y1="${yFor(rank)}" x2="${width - padding.right}" y2="${yFor(rank)}" class="chart-grid" />
   `).join("");
 
-  const dateLabels = snapshots.map((snapshot, index) => `
-    <text x="${xFor(index)}" y="${height - 34}" class="chart-label chart-date" transform="rotate(-25 ${xFor(index)} ${height - 34})">${escapeHtml(snapshot.date.replace(", 2026", ""))}</text>
+  const matchdayLabels = snapshots.map((snapshot, index) => `
+    <text x="${xFor(index)}" y="${height - 34}" class="chart-label chart-date">${escapeHtml(getMatchdayLabel(snapshot.matchday))}</text>
+  `).join("");
+
+  const matchdayMarkers = snapshots.map((snapshot, index) => `
+    <line x1="${xFor(index)}" y1="${padding.top}" x2="${xFor(index)}" y2="${padding.top + plotHeight}" class="chart-fixture-line" />
   `).join("");
 
   const legend = savedPicks.map((pick, index) => `
@@ -407,9 +424,10 @@ function renderRankChart() {
 
   rankChartEl.innerHTML = `
     <div class="rank-chart-scroll">
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Contestant ranks by scored matchday">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Contestant cumulative ranks by matchday">
         ${rankLabels}
-        ${dateLabels}
+        ${matchdayMarkers}
+        ${matchdayLabels}
         ${lines}
       </svg>
     </div>

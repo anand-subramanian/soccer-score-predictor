@@ -507,6 +507,11 @@ button.secondary:hover {
   stroke-width: 1;
 }
 
+.chart-fixture-line {
+  stroke: #e8edf3;
+  stroke-width: 1;
+}
+
 .chart-label {
   fill: #667085;
   font-size: 13px;
@@ -514,7 +519,7 @@ button.secondary:hover {
 }
 
 .chart-date {
-  text-anchor: end;
+  text-anchor: middle;
 }
 
 .chart-legend {
